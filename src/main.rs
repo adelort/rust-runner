@@ -1,10 +1,12 @@
 use minifb::{Key, Window, WindowOptions};
+use rand::thread_rng;
+use rand_distr::{Distribution, Normal};
 use std::time::Instant;
 
 const WIDTH: usize = 1920;
 const HEIGHT: usize = 1080;
 
-const RUNNER_COUNT: usize = 1000;
+const RUNNER_COUNT: usize = 20_000;
 const RUNNER_RADIUS: usize = 1;
 const ALIGNED_RUNNERS: usize = 40; // Number of runners in each row
 const RUNNER_START_DISTANCE: usize = 2;
@@ -12,8 +14,8 @@ const RUNNER_START_DISTANCE: usize = 2;
 const T_MAX: f64 = 600.0; // Maximum simulation time in seconds
 const TIME_FACTOR: f64 = 10.0;
 
-const V_MEAN: f64 = 8.0;
-const V_STANDARD_DEVIATION: f64 = 10.0;
+const V_MEAN: f64 = 12.0;
+const V_STANDARD_DEVIATION: f64 = 2.0;
 
 const BACKGROUND_COLOR: u32 = 0x000000;
 
@@ -94,9 +96,12 @@ impl Race {
         let wave_manager = WaveManager::new();
 
         let mut runners = Vec::with_capacity(runner_count);
-        for i in 0..runner_count {
-            let velocity_variation = V_STANDARD_DEVIATION * (i as f64) / (runner_count as f64);
-            let velocity = V_MEAN + velocity_variation;
+
+        let mut rng = thread_rng();
+        let normal_distribution = Normal::new(V_MEAN, V_STANDARD_DEVIATION).unwrap();
+
+        for _i in 0..runner_count {
+            let velocity = normal_distribution.sample(&mut rng); // Tirage selon la loi normale
 
             // Assign the runner to the correct wave based on velocity
             let wave_index = wave_manager.assign_wave(velocity);
