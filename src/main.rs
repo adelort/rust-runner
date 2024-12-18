@@ -1,21 +1,23 @@
 use minifb::{Key, Window, WindowOptions};
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
-use std::time::Instant;
+use std::{f64::INFINITY, time::Instant};
 
 const WIDTH: usize = 1920;
 const HEIGHT: usize = 1080;
 
 const RUNNER_COUNT: usize = 20_000;
 const RUNNER_RADIUS: usize = 1;
-const ALIGNED_RUNNERS: usize = 40; // Number of runners in each row
+const ALIGNED_RUNNERS: usize = 50; // Number of runners in each row
 const RUNNER_START_DISTANCE: usize = 2;
+const WAVE_GAP: usize = 20;
 
-const T_MAX: f64 = 600.0; // Maximum simulation time in seconds
+const T_MAX: f64 = 1000.0; // Maximum simulation time in seconds
 const TIME_FACTOR: f64 = 10.0;
 
 const V_MEAN: f64 = 12.0;
 const V_STANDARD_DEVIATION: f64 = 2.0;
+const VELOCITY_SELF_ESTIMATION_ERROR_STANDARD_DEVIATION: f64 = 1.0;
 
 const BACKGROUND_COLOR: u32 = 0x000000;
 
@@ -45,7 +47,7 @@ impl WaveManager {
         Self {
             waves: vec![
                 Wave {
-                    v_min: 0.0,
+                    v_min: -INFINITY,
                     v_max: 10.0,
                     color: 0xff0000,
                 },
@@ -61,8 +63,8 @@ impl WaveManager {
                 },
                 Wave {
                     v_min: 15.0,
-                    v_max: f64::INFINITY,
-                    color: 0xffffff,
+                    v_max: INFINITY,
+                    color: 0xff00ff,
                 },
             ],
         }
@@ -70,8 +72,16 @@ impl WaveManager {
 
     /// Assigns a wave index to a runner based on their velocity
     fn assign_wave(&self, velocity: f64) -> usize {
+        let mut rng = thread_rng();
+        let normal_distribution =
+            Normal::new(0., VELOCITY_SELF_ESTIMATION_ERROR_STANDARD_DEVIATION).unwrap();
+
+        let velocity_self_estimation_error = normal_distribution.sample(&mut rng); // Tirage selon la loi normale
+
+        let self_estimated_velocity = velocity + velocity_self_estimation_error;
+
         for (i, wave) in self.waves.iter().enumerate() {
-            if velocity >= wave.v_min && velocity < wave.v_max {
+            if self_estimated_velocity >= wave.v_min && self_estimated_velocity < wave.v_max {
                 return i;
             }
         }
@@ -101,7 +111,7 @@ impl Race {
         let normal_distribution = Normal::new(V_MEAN, V_STANDARD_DEVIATION).unwrap();
 
         for _i in 0..runner_count {
-            let velocity = normal_distribution.sample(&mut rng); // Tirage selon la loi normale
+            let velocity = velocity_normal_distribution.sample(&mut rng);
 
             // Assign the runner to the correct wave based on velocity
             let wave_index = wave_manager.assign_wave(velocity);
@@ -137,7 +147,9 @@ impl Race {
 
             if next_i0 != 0 {
                 next_i0 = 0;
-                next_j0 += 1;
+                next_j0 += WAVE_GAP + 1;
+            } else {
+                next_j0 += WAVE_GAP;
             }
         }
 
