@@ -1,7 +1,10 @@
 use minifb::{Key, Window, WindowOptions};
-use rand::thread_rng;
+use rand::{rngs::ThreadRng, thread_rng};
 use rand_distr::{Distribution, Normal};
-use std::{f64::INFINITY, time::Instant};
+use std::{
+    f64::{consts::PI, INFINITY},
+    time::Instant,
+};
 
 const WIDTH: usize = 1920;
 const HEIGHT: usize = 1080;
@@ -11,6 +14,7 @@ const RUNNER_RADIUS: usize = 1;
 const ALIGNED_RUNNERS: usize = 50; // Number of runners in each row
 const RUNNER_START_DISTANCE: usize = 2;
 const WAVE_GAP: usize = 20;
+const TRACK_HEIGHT: usize = (ALIGNED_RUNNERS - 1) * RUNNER_START_DISTANCE;
 
 const T_MAX: f64 = 1000.0; // Maximum simulation time in seconds
 const TIME_FACTOR: f64 = 10.0;
@@ -18,14 +22,16 @@ const TIME_FACTOR: f64 = 10.0;
 const V_MEAN: f64 = 12.0;
 const V_STANDARD_DEVIATION: f64 = 2.0;
 const VELOCITY_SELF_ESTIMATION_ERROR_STANDARD_DEVIATION: f64 = 1.0;
+const ORIENTATION_STANDARD_DEVIATION: f64 = PI / 24.0; //radians
 
 const BACKGROUND_COLOR: u32 = 0x000000;
 
 /// Represents a single runner in the race
 struct Runner {
-    x0: f64,           // Starting x-coordinate
-    y0: f64,           // Starting y-coordinate
-    v: f64,            // Velocity
+    x: f64,
+    y: f64,
+    v: f64,
+    t: f64,
     wave_index: usize, // Index to the wave the runner belongs to
 }
 
@@ -108,7 +114,7 @@ impl Race {
         let mut runners = Vec::with_capacity(runner_count);
 
         let mut rng = thread_rng();
-        let normal_distribution = Normal::new(V_MEAN, V_STANDARD_DEVIATION).unwrap();
+        let velocity_normal_distribution = Normal::new(V_MEAN, V_STANDARD_DEVIATION).unwrap();
 
         for _i in 0..runner_count {
             let velocity = velocity_normal_distribution.sample(&mut rng);
@@ -117,39 +123,40 @@ impl Race {
             let wave_index = wave_manager.assign_wave(velocity);
 
             runners.push(Runner {
-                x0: 0.0,
-                y0: 0.0,
+                x: 0.0,
+                y: 0.0,
+                t: 0.0,
                 v: velocity,
                 wave_index,
             });
         }
 
-        let mut next_i0: usize = 0;
-        let mut next_j0: usize = 0;
+        let mut next_i: usize = 0;
+        let mut next_j: usize = 0;
 
         for wave_index in 0..wave_manager.waves.len() {
             for runner in runners.iter_mut() {
                 if runner.wave_index == wave_index {
-                    let next_x0 = (next_j0 * RUNNER_START_DISTANCE) as f64;
-                    let next_y0 = (next_i0 * RUNNER_START_DISTANCE) as f64;
+                    let next_x = (next_j * RUNNER_START_DISTANCE) as f64;
+                    let next_y = (next_i * RUNNER_START_DISTANCE) as f64;
 
-                    runner.x0 = next_x0;
-                    runner.y0 = next_y0;
+                    runner.x = next_x;
+                    runner.y = next_y;
 
-                    if next_i0 == ALIGNED_RUNNERS {
-                        next_i0 = 0;
-                        next_j0 += 1;
+                    if next_i == ALIGNED_RUNNERS {
+                        next_i = 0;
+                        next_j += 1;
                     } else {
-                        next_i0 += 1;
+                        next_i += 1;
                     }
                 }
             }
 
-            if next_i0 != 0 {
-                next_i0 = 0;
-                next_j0 += WAVE_GAP + 1;
+            if next_i != 0 {
+                next_i = 0;
+                next_j += WAVE_GAP + 1;
             } else {
-                next_j0 += WAVE_GAP;
+                next_j += WAVE_GAP;
             }
         }
 
@@ -160,18 +167,40 @@ impl Race {
     }
 
     /// Draw all runners at the given time on the buffer
-    fn draw(&self, t: f64, buffer: &mut [u32]) {
-        for runner in &self.runners {
-            runner.draw(t, buffer, &self.wave_manager);
+    fn draw(&mut self, t: f64, buffer: &mut [u32]) {
+        let mut rng = thread_rng();
+
+        for runner in self.runners.iter_mut() {
+            runner.draw(t, buffer, &self.wave_manager, &mut rng);
         }
     }
 }
 
 impl Runner {
     /// Draw the runner at time `t` on the buffer
-    fn draw(&self, t: f64, buffer: &mut [u32], wave_manager: &WaveManager) {
-        let new_x = self.x0 + self.v * t;
-        let new_y = self.y0;
+    fn draw(
+        &mut self,
+        t: f64,
+        buffer: &mut [u32],
+        wave_manager: &WaveManager,
+        rng: &mut ThreadRng,
+    ) {
+        let orientation_normal_distribution =
+            Normal::new(0.0, ORIENTATION_STANDARD_DEVIATION).unwrap();
+
+        let orientation = orientation_normal_distribution.sample(rng);
+
+        let dt = t - self.t;
+
+        self.x = self.x + self.v * orientation.cos() * dt;
+        self.y = self.y + self.v * orientation.sin() * dt;
+
+        // Keep the runner within the track
+        if self.y < 0.0 {
+            self.y = -self.y;
+        } else if self.y > TRACK_HEIGHT as f64 {
+            self.y = 2.0 * TRACK_HEIGHT as f64 - self.y;
+        }
 
         // Get the wave properties for the runner
         let wave = wave_manager.get_wave(self.wave_index);
@@ -180,10 +209,12 @@ impl Runner {
         for dx in -(RUNNER_RADIUS as isize + 1)..RUNNER_RADIUS as isize {
             for dy in -(RUNNER_RADIUS as isize + 1)..RUNNER_RADIUS as isize {
                 if dx * dx + dy * dy <= (RUNNER_RADIUS * RUNNER_RADIUS) as isize {
-                    draw_dot(new_x + dx as f64, new_y + dy as f64, buffer, wave.color);
+                    draw_dot(self.x + dx as f64, self.y + dy as f64, buffer, wave.color);
                 }
             }
         }
+
+        self.t = t;
     }
 }
 
@@ -208,7 +239,7 @@ fn main() {
     )
     .expect("Unable to open window");
 
-    let race = Race::new(RUNNER_COUNT);
+    let mut race = Race::new(RUNNER_COUNT);
     let start_time = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
